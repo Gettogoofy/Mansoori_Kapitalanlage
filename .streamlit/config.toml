@@ -1,0 +1,10 @@
+# Erzwingt ein helles Theme – unabhängig vom System-Darkmode.
+# Damit bleiben helle Karten/Sidebar mit dunkler Schrift überall lesbar,
+# während weiße Schrift nur auf farbigen Flächen (Hero, Banner, Buttons, Badges) steht.
+[theme]
+base = "light"
+primaryColor = "#1E2761"            # Navy (Akzent/Primär)
+backgroundColor = "#FFFFFF"         # Haupt-Hintergrund weiß
+secondaryBackgroundColor = "#EEF1F8" # Sidebar / sekundäre Flächen (hellgrau-blau)
+textColor = "#262730"               # Standard-Textfarbe: dunkel = gut lesbar
+font = "sans serif"
