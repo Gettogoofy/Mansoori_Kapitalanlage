@@ -51,6 +51,20 @@ st.session_state.setdefault("nav_page", "🏠 Cockpit")
 st.session_state.setdefault("wizard_step", 1)
 st.session_state.setdefault("advisory_done", False)
 
+# Persistentes Kundenprofil, getrennt von den Widget-Keys (w_*) aus Schritt 1.
+# Streamlit entfernt einen Widget-Key automatisch aus session_state, sobald das
+# zugehörige Widget in einem Rerun nicht gerendert wird (z.B. weil man auf
+# Schritt 2/3 ist). Damit gingen Name/Betrag/Horizont/Risiko/Präferenzen beim
+# Verlassen von Schritt 1 verloren. Das "profile"-Dict ist kein Widget-Key und
+# bleibt deshalb über den ganzen Wizard-Ablauf hinweg erhalten.
+st.session_state.setdefault("profile", {
+    "name": "Dr. Maria Schmidt",
+    "amount": 250_000,
+    "horizon": "5–10 Jahre",
+    "risk": "Moderat (Klasse 3)",
+    "preferences": ["🌱 ESG / Nachhaltigkeit"],
+})
+
 NAV_OPTIONS = [
     "🏠 Cockpit",
     "🧭 Kunde beraten",
@@ -296,19 +310,97 @@ RISK_TO_CLASS = {
     "Aggressiv (Klasse 5)": 5,
 }
 
+# Pro Anlageklasse ein Standard- und ein ESG-Produkt, damit der Vorschlag in
+# Schritt 2 tatsächlich auf Risikoklasse, Betrag und ESG-Präferenz reagiert
+# (Name/ISIN/Rendite, Gewichtung & Euro-Betrag), statt eine statische Demo-Tabelle zu zeigen.
+PRODUCT_CATALOG = {
+    "Aktien": {
+        "standard": ("iShares Core MSCI World ETF", "IE00B4L5Y983", "7,2 % p.a.", 4),
+        "esg": ("iShares MSCI World SRI UCITS ETF", "IE00BYX5NX33", "6,9 % p.a.", 4),
+    },
+    "Anleihen": {
+        "standard": ("DWS Zinseinkommen", "DE0008474560", "3,1 % p.a.", 2),
+        "esg": ("DWS Invest ESG Euro Bonds", "LU0300357554", "2,8 % p.a.", 2),
+    },
+    "ETFs": {
+        "standard": ("Xtrackers DAX UCITS ETF", "LU0274211480", "6,8 % p.a.", 4),
+        "esg": ("Xtrackers MSCI Europe ESG UCITS ETF", "LU0292096186", "6,3 % p.a.", 3),
+    },
+    "Cash": {
+        "standard": ("Cash / Tagesgeld", "–", "2,5 % p.a.", 1),
+        "esg": ("Cash / Tagesgeld (Green Deposit)", "–", "2,3 % p.a.", 1),
+    },
+}
+
+# Anzeigename je Anlageklasse für die Produkttabelle. "Aktien" und "ETFs" sind in
+# RISK_ALLOC zwei separate Risikoklassen-Buckets, beide aber per ETF umgesetzt –
+# ohne diese Differenzierung sah die blosse Bezeichnung "Aktien" neben einem
+# Produktnamen mit "ETF" wie ein Widerspruch aus.
+ASSET_DISPLAY = {
+    "Aktien": "Aktien-ETF (Welt)",
+    "Anleihen": "Anleihen-Fonds",
+    "ETFs": "Themen-/Index-ETF",
+    "Cash": "Cash",
+}
+
+# Auswahl an Ausschluss-/Nachhaltigkeitspräferenzen für das Multiselect in Schritt 1.
+EXCLUSION_OPTIONS = [
+    "🌱 ESG / Nachhaltigkeit",
+    "🚫 Keine Rüstungsindustrie",
+    "🚫 Keine Pharma-Industrie",
+    "🚫 Keine fossile Brennstoffe",
+    "🚫 Keine Tabakindustrie",
+    "🚫 Keine Glücksspielindustrie",
+]
+
+# Einzelaktien-Satellit: wird nur bei höherer Risikobereitschaft beigemischt und
+# zehrt einen Teil der "Aktien"-Gewichtung auf (siehe recommended_products()).
+SATELLITE_STOCKS = {
+    "Wachstumsorientiert (Klasse 4)": [
+        ("NVIDIA Corp.", "US67066G1040", "18,4 % p.a.", 5),
+    ],
+    "Aggressiv (Klasse 5)": [
+        ("NVIDIA Corp.", "US67066G1040", "18,4 % p.a.", 5),
+        ("SpaceX (Pre-IPO, Demo)", "–", "n/a (illiquide)", 5),
+    ],
+}
+
+# ESG-Scores je Produktname – einzige Quelle für Cockpit, Portfolio überwachen
+# und den ESG-Filter, damit überall dieselben Positionen mit denselben Scores
+# auftauchen, statt unabhängiger Demo-Positionen (Siemens, Allianz SE, ...).
+ESG_SCORES = {
+    "iShares Core MSCI World ETF": 74,
+    "iShares MSCI World SRI UCITS ETF": 91,
+    "DWS Zinseinkommen": 58,
+    "DWS Invest ESG Euro Bonds": 86,
+    "Xtrackers DAX UCITS ETF": 51,
+    "Xtrackers MSCI Europe ESG UCITS ETF": 88,
+    "Cash / Tagesgeld": 70,
+    "Cash / Tagesgeld (Green Deposit)": 95,
+    "NVIDIA Corp.": 64,
+    "SpaceX (Pre-IPO, Demo)": 50,
+}
+
+# Produktname -> Anlageklassen-Key (für den ESG-Rebalancing-Vorschlag: damit lässt
+# sich zu einem gehaltenen Standardprodukt die passende ESG-Alternative aus
+# PRODUCT_CATALOG nachschlagen).
+PRODUCT_TO_ASSET = {
+    name: asset
+    for asset, variants in PRODUCT_CATALOG.items()
+    for name, _isin, _ret, _risk_class in variants.values()
+}
+
+# MiFID-II-Produktliste für den Compliance-Check – aus PRODUCT_CATALOG und
+# SATELLITE_STOCKS abgeleitet, damit dort exakt dieselben Produkte/Risikoklassen
+# erscheinen wie im KI-Vorschlag bei "Kunde beraten".
 COMPLIANCE_PRODUCTS = {
-    "iShares Core MSCI World ETF (Klasse 4)": 4,
-    "Xtrackers DAX UCITS ETF (Klasse 4)": 4,
-    "DWS Zinseinkommen (Klasse 2)": 2,
-    "Allianz Interglobal A EUR (Klasse 3)": 3,
-    "Deka-Geldmarktfonds (Klasse 1)": 1,
-    "DWS Top Dividende (Klasse 3)": 3,
+    f"{name} (Klasse {risk_class})": risk_class
+    for variants in PRODUCT_CATALOG.values()
+    for name, _isin, _ret, risk_class in variants.values()
 }
-COMPLIANCE_PROFILES = {
-    "Dr. Maria Schmidt – Klasse 3": 3,
-    "Klaus Weber – Klasse 2": 2,
-    "Julia Bauer – Klasse 4": 4,
-}
+for _stocks in SATELLITE_STOCKS.values():
+    for _name, _isin, _ret, _risk_class in _stocks:
+        COMPLIANCE_PRODUCTS.setdefault(f"{_name} (Klasse {_risk_class})", _risk_class)
 
 
 def portfolio_performance_fig() -> go.Figure:
@@ -331,6 +423,59 @@ def portfolio_performance_fig() -> go.Figure:
     return fig
 
 
+def recommended_products(alloc: dict, amount: int, esg: bool, risk: str) -> pd.DataFrame:
+    """Produktliste aus der Allokation ableiten, damit Risikoklasse, Betrag,
+    ESG-Präferenz und (bei höherer Risikobereitschaft) Einzelaktien-Satelliten
+    aus Schritt 1 sich tatsächlich im Vorschlag widerspiegeln."""
+    variant = "esg" if esg else "standard"
+    satellites = SATELLITE_STOCKS.get(risk, [])
+    # Einzelaktien zehren einen Teil der Fonds-Aktienquote auf (max. 15 Punkte),
+    # statt die Gesamtallokation zu verändern.
+    aktien_carve = min(alloc.get("Aktien", 0), 15) if satellites else 0
+
+    # "Anlageklasse" macht die Zuordnung zur Pie-Chart-Kategorie explizit, damit
+    # Tabelle und Allokation auch bei ähnlich klingenden Produktnamen (mehrere
+    # ETFs in unterschiedlichen Klassen) eindeutig zusammenpassen.
+    rows = []
+    for asset, pct in alloc.items():
+        weight = pct - aktien_carve if asset == "Aktien" else pct
+        if weight <= 0:
+            continue
+        name, isin, ret, risk_class = PRODUCT_CATALOG[asset][variant]
+        betrag = f"{amount * weight / 100:,.0f} €".replace(",", ".")
+        rows.append([ASSET_DISPLAY[asset], name, isin, f"{weight} %", betrag, ret, risk_class])
+
+    if aktien_carve and satellites:
+        # Ganzzahlige Gewichte, die exakt aktien_carve aufsummieren (Rest aufs letzte Element).
+        base = aktien_carve // len(satellites)
+        weights = [base] * len(satellites)
+        weights[-1] += aktien_carve - base * len(satellites)
+        for (name, isin, ret, risk_class), weight in zip(satellites, weights):
+            betrag = f"{amount * weight / 100:,.0f} €".replace(",", ".")
+            rows.append(["Aktien (Einzeltitel)", name, isin, f"{weight} %", betrag, ret, risk_class])
+
+    return pd.DataFrame(
+        rows,
+        columns=["Anlageklasse", "Produkt", "ISIN", "Gewichtung", "Betrag", "Erw. Rendite", "Risikoklasse"],
+    )
+
+
+def current_holdings() -> pd.DataFrame:
+    """Positionen des in Schritt 1 erfassten Kunden – von Cockpit, Portfolio
+    überwachen und Compliance gemeinsam genutzt, damit überall dieselben
+    Produkte (statt unabhängiger Demo-Listen) angezeigt werden."""
+    profile = st.session_state["profile"]
+    risk = profile["risk"]
+    esg = "🌱 ESG / Nachhaltigkeit" in profile["preferences"]
+    return recommended_products(RISK_ALLOC[risk], profile["amount"], esg, risk)
+
+
+def portfolio_esg_score(holdings: pd.DataFrame) -> int:
+    weights = holdings["Gewichtung"].str.rstrip(" %").astype(float)
+    scores = holdings["Produkt"].map(ESG_SCORES).fillna(60)
+    return round((weights * scores).sum() / weights.sum())
+
+
 def allocation_pie(alloc: dict, title: str, hole: float = 0.0) -> go.Figure:
     fig = go.Figure(data=[go.Pie(
         labels=list(alloc.keys()), values=list(alloc.values()), hole=hole,
@@ -343,6 +488,19 @@ def allocation_pie(alloc: dict, title: str, hole: float = 0.0) -> go.Figure:
 # Bereich 1: Cockpit
 # --------------------------------------------------------------------------- #
 def page_cockpit() -> None:
+    profile = st.session_state["profile"]
+    name = profile["name"]
+    risk = profile["risk"]
+    cust_class = RISK_TO_CLASS[risk]
+    risk_label = risk.split(" (")[0]
+    holdings = current_holdings()
+    esg_score = portfolio_esg_score(holdings)
+    worst = holdings.assign(ESG=holdings["Produkt"].map(ESG_SCORES).fillna(60)).pipe(
+        lambda df: df.loc[df["ESG"].idxmin()]
+    )
+    esg_alert = worst["ESG"] < 60
+    betrag_str = f"{profile['amount']:,.0f} €".replace(",", ".")
+
     today = datetime.now().strftime("%A, %d.%m.%Y")
     if is_advisor():
         hero("FinIntel Cockpit · Berater-Ansicht",
@@ -350,13 +508,13 @@ def page_cockpit() -> None:
              f"{today} — Marktlage, Warnungen und Ihre nächste sinnvolle Aktion auf einen Blick.")
     else:
         hero("Mein FinIntel · Kundenansicht",
-             "Willkommen, Dr. Maria Schmidt 👋",
+             f"Willkommen, {name} 👋",
              f"{today} — So steht es heute um Ihre Geldanlage. Alles verständlich erklärt.")
 
     # Next-Best-Action
     nba_title = t("Nächster Schritt: Neue Kundenanfrage bearbeiten",
                   "Empfehlung: Lassen Sie sich einen Anlagevorschlag erstellen")
-    nba_text = t("Für Dr. Maria Schmidt liegt eine vollständige Anfrage vor – starten Sie die geführte Beratung.",
+    nba_text = t(f"Für {name} liegt eine vollständige Anfrage vor – starten Sie die geführte Beratung.",
                  "In wenigen Schritten erhalten Sie einen persönlichen, geprüften Vorschlag.")
     c_icon, c_txt, c_btn = st.columns([0.07, 0.73, 0.20])
     with c_icon:
@@ -374,13 +532,14 @@ def page_cockpit() -> None:
     st.markdown(f'<div class="fi-section">{t("Marktlage & Kennzahlen", "Mein Überblick")}</div>',
                 unsafe_allow_html=True)
 
-    # KPI-Zeile
+    # KPI-Zeile – Betrag, Risikoklasse & ESG-Score stammen aus dem in
+    # "Kunde beraten" erfassten Profil, statt aus unabhängigen Demo-Werten.
     k1, k2, k3, k4 = st.columns(4)
-    k1.metric(t("Portfolio-Wert", "Mein Vermögen"), "1.247.500 €", "+3,2 % diese Woche")
+    k1.metric(t("Portfolio-Wert", "Mein Vermögen"), betrag_str, "+3,2 % diese Woche")
     k2.metric(t("YTD-Rendite", "Ertrag dieses Jahr"), "+7,3 %",
               t("Benchmark: +5,1 %", "Markt: +5,1 %"))
-    k3.metric(t("Risikoscore", "Risiko-Stufe"), "Moderat", "Klasse 3 / 5", delta_color="off")
-    k4.metric("ESG-Score", "72 / 100", "+4 " + t("seit letztem Monat", "Punkte"))
+    k3.metric(t("Risikoscore", "Risiko-Stufe"), risk_label, f"Klasse {cust_class} / 5", delta_color="off")
+    k4.metric("ESG-Score", f"{esg_score} / 100", "+4 " + t("seit letztem Monat", "Punkte"))
 
     st.write("")
 
@@ -389,32 +548,43 @@ def page_cockpit() -> None:
     with c1:
         st.plotly_chart(style_plotly(portfolio_performance_fig()), width="stretch")
     with c2:
-        alloc = {"Aktien": 45, "Anleihen": 30, "ETFs": 15, "Cash": 10}
-        st.plotly_chart(style_plotly(allocation_pie(alloc, t("Asset-Allokation", "Meine Aufteilung"))),
+        st.plotly_chart(style_plotly(allocation_pie(RISK_ALLOC[risk],
+                                                     t("Asset-Allokation", "Meine Aufteilung"))),
                         width="stretch")
 
-    # Alerts
+    # Alerts – die ESG-Warnung bezieht sich auf die tatsächlich schwächste
+    # Position aus den aktuellen Holdings, nicht auf eine unabhängige Demo-Aktie.
     st.markdown(f'<div class="fi-section">{t("Aktive Warnungen", "Wichtige Hinweise")}</div>',
                 unsafe_allow_html=True)
     if is_advisor():
         st.error("🔴 **KRITISCH** — DAX -5,2 % in 24h · Krisenwarnung für 12 Portfolios ausgelöst")
         st.warning("🟠 **WARNUNG** — Zinskurven-Inversion erkannt · LSTM-Konfidenz 82 %")
-        st.info("🔵 **INFO** — ESG-Score Siemens -8 Punkte · Umschichtung prüfen")
+        if esg_alert:
+            st.info(f"🔵 **INFO** — ESG-Score {worst['Produkt']} {int(worst['ESG'])}/100 · Umschichtung prüfen")
+        else:
+            st.info("🔵 **INFO** — Keine ESG-Auffälligkeiten in der aktuellen Allokation")
     else:
         st.warning("🟠 Die Märkte schwanken aktuell stärker als üblich – Ihr Portfolio ist breit gestreut und gut aufgestellt.")
-        st.info("🔵 Eine Position (Siemens) erfüllt Ihre Nachhaltigkeits-Kriterien nicht mehr ganz – Ihr Berater hat einen Tausch vorbereitet.")
+        if esg_alert:
+            st.info(f"🔵 Eine Position ({worst['Produkt']}) erfüllt Ihre Nachhaltigkeits-Kriterien nicht mehr ganz – "
+                    "Ihr Berater hat einen Tausch vorbereitet.")
+        else:
+            st.info("🔵 Alle Positionen erfüllen aktuell Ihre Nachhaltigkeits-Kriterien.")
 
     # ECA-Log nur im Berater-Modus
     if is_advisor():
         with st.expander("⚡ Systemereignisse (ECA-Ereignislog)"):
+            esg_event = (f"{worst['Produkt']} ESG {int(worst['ESG'])} Punkte" if esg_alert
+                         else "Keine ESG-Auffälligkeiten")
             log = pd.DataFrame([
                 ["09.06.2026 08:23", "Kursrückgang", "DAX -5,2 % in 24h",
                  "🔴 KRITISCH", "Krisenwarnung + Berater-Alert"],
-                ["09.06.2026 07:15", "ESG-Score Änderung", "Siemens ESG -8 Punkte",
-                 "🟠 WARNUNG", "Umschichtungsvorschlag generiert"],
+                ["09.06.2026 07:15", "ESG-Score Änderung", esg_event,
+                 "🟠 WARNUNG" if esg_alert else "🟢 OK",
+                 "Umschichtungsvorschlag generiert" if esg_alert else "Keine Aktion nötig"],
                 ["08.06.2026 16:44", "Makro-Indikator", "Zinskurven-Inversion",
                  "🟠 WARNUNG", "LSTM-Frühwarnung ausgelöst"],
-                ["08.06.2026 11:02", "Neue Kundenanfrage", "Kundenprofil vollständig",
+                ["08.06.2026 11:02", "Neue Kundenanfrage", f"Profil {name} vollständig",
                  "🟢 OK", "ML-Inference abgeschlossen"],
                 ["07.06.2026 09:30", "Compliance-Check", "Portfolio-Rebalancing",
                  "🟢 OK", "MiFID-II Freigabe erteilt"],
@@ -446,23 +616,46 @@ def _wizard_step1() -> None:
     st.markdown(f'<div class="fi-section">① {t("Kundenprofil erfassen", "Ihre Angaben")}</div>',
                 unsafe_allow_html=True)
 
+    profile = st.session_state["profile"]
+    # Widget-Keys aus dem persistenten Profil "wiederbeleben": Streamlit hat sie
+    # beim Verlassen von Schritt 1 aus session_state entfernt (siehe Hinweis bei
+    # der Profil-Initialisierung oben), daher hier neu aus profile befüllen.
+    st.session_state.setdefault("w_name", profile["name"])
+    st.session_state.setdefault("w_amount", profile["amount"])
+    st.session_state.setdefault("w_horizon", profile["horizon"])
+    st.session_state.setdefault("w_risk", profile["risk"])
+    st.session_state.setdefault("w_prefs", profile["preferences"])
+
     c1, c2 = st.columns(2)
     with c1:
-        st.text_input("Kundenname", value="Dr. Maria Schmidt", key="w_name",
+        st.text_input("Kundenname", key="w_name",
                       help="Name der zu beratenden Person.")
-        st.slider("Anlagebetrag (€)", 10_000, 1_000_000, 250_000, step=5000,
+        st.slider("Anlagebetrag (€)", 10_000, 1_000_000, step=5000,
                   format="%d €", key="w_amount",
                   help="Wie viel soll insgesamt angelegt werden?")
     with c2:
         st.selectbox("Anlagehorizont",
                      ["1–3 Jahre", "3–5 Jahre", "5–10 Jahre", "> 10 Jahre"],
-                     index=2, key="w_horizon",
+                     key="w_horizon",
                      help="Wie lange kann das Geld investiert bleiben?")
-        st.radio("Risikobereitschaft", list(RISK_ALLOC.keys()), index=1, key="w_risk",
+        st.radio("Risikobereitschaft", list(RISK_ALLOC.keys()), key="w_risk",
                  help=t("Bestimmt die MiFID-II-Risikoklasse des Kunden.",
                         "Wie stark dürfen Ihre Anlagen schwanken?"))
-    st.checkbox(t("ESG-Präferenz aktivieren", "Mir ist Nachhaltigkeit wichtig (ESG)"),
-                value=True, key="w_esg")
+    st.multiselect(
+        t("Anlagepräferenzen / Ausschlüsse", "Was ist Ihnen wichtig?"),
+        EXCLUSION_OPTIONS, key="w_prefs",
+        help=t("Schliesst Branchen aus dem Vorschlag aus bzw. priorisiert ESG-Produkte.",
+               "Wählen Sie aus, was Ihnen bei der Geldanlage wichtig ist."),
+    )
+
+    # Sofort ins persistente Profil zurückschreiben, damit der aktuelle Stand
+    # auch dann erhalten bleibt, wenn die Widgets im nächsten Rerun (Schritt 2/3)
+    # nicht mehr existieren.
+    profile["name"] = st.session_state["w_name"]
+    profile["amount"] = st.session_state["w_amount"]
+    profile["horizon"] = st.session_state["w_horizon"]
+    profile["risk"] = st.session_state["w_risk"]
+    profile["preferences"] = st.session_state["w_prefs"]
 
     st.write("")
     _, right = st.columns([0.7, 0.3])
@@ -474,8 +667,14 @@ def _wizard_step1() -> None:
 
 
 def _wizard_step2() -> None:
-    risk = st.session_state.get("w_risk", "Moderat (Klasse 3)")
-    name = st.session_state.get("w_name", "Dr. Maria Schmidt")
+    profile = st.session_state["profile"]
+    risk = profile["risk"]
+    name = profile["name"]
+    amount = profile["amount"]
+    horizon = profile["horizon"]
+    preferences = profile["preferences"]
+    esg = "🌱 ESG / Nachhaltigkeit" in preferences
+    exclusions = [p for p in preferences if p != "🌱 ESG / Nachhaltigkeit"]
 
     st.markdown(f'<div class="fi-section">② {t("KI-Anlagevorschlag", "Ihr Vorschlag")}</div>',
                 unsafe_allow_html=True)
@@ -488,6 +687,14 @@ def _wizard_step2() -> None:
                     unsafe_allow_html=True)
     st.write("")
 
+    betrag_str = f"{amount:,.0f} €".replace(",", ".")
+    caption = f"Anlagebetrag: {betrag_str} · Horizont: {horizon}"
+    if esg:
+        caption += " · ESG-Filter aktiv"
+    if exclusions:
+        caption += " · Ausschlüsse: " + ", ".join(e.split(" ", 1)[1] for e in exclusions)
+    st.caption(caption)
+
     c1, c2 = st.columns([2, 3])
     with c1:
         alloc = RISK_ALLOC[risk]
@@ -496,16 +703,13 @@ def _wizard_step2() -> None:
                                         hole=0.55), height=320),
             width="stretch")
     with c2:
-        st.markdown(t("##### Konkrete Produktempfehlungen", "##### Das ist enthalten"))
-        products = pd.DataFrame([
-            ["iShares Core MSCI World ETF", "IE00B4L5Y983", "30 %", "7,2 % p.a.", "4"],
-            ["Xtrackers DAX UCITS ETF", "LU0274211480", "15 %", "6,8 % p.a.", "4"],
-            ["DWS Zinseinkommen", "DE0008474560", "25 %", "3,1 % p.a.", "2"],
-            ["Allianz Interglobal A EUR", "DE0008475070", "20 %", "5,4 % p.a.", "3"],
-            ["Cash / Tagesgeld", "–", "10 %", "2,5 % p.a.", "1"],
-        ], columns=["Produkt", "ISIN", "Gewichtung", "Erw. Rendite", "Risikoklasse"])
+        title = t("##### Konkrete Produktempfehlungen", "##### Das ist enthalten")
+        if risk in SATELLITE_STOCKS:
+            title += " 📈 " + t("inkl. Einzelaktien-Satellit", "inkl. Einzelaktien")
+        st.markdown(title)
+        products = recommended_products(alloc, amount, esg, risk)
         if not is_advisor():
-            products = products[["Produkt", "Gewichtung", "Erw. Rendite"]]
+            products = products[["Anlageklasse", "Produkt", "Gewichtung", "Betrag", "Erw. Rendite"]]
         st.dataframe(products, width="stretch", hide_index=True)
 
     if not is_advisor():
@@ -527,11 +731,18 @@ def _wizard_step2() -> None:
 
 
 def _wizard_step3() -> None:
-    risk = st.session_state.get("w_risk", "Moderat (Klasse 3)")
+    profile = st.session_state["profile"]
+    risk = profile["risk"]
     cust_class = RISK_TO_CLASS[risk]
+    exclusions = [p.split(" ", 1)[1] for p in profile["preferences"]
+                  if p != "🌱 ESG / Nachhaltigkeit"]
 
     st.markdown(f'<div class="fi-section">③ {t("MiFID-II Compliance-Freigabe", "Prüfung & Freigabe")}</div>',
                 unsafe_allow_html=True)
+
+    screening = ("✅ Negative-Screening: passt zu Ausschlüssen (" + ", ".join(exclusions) + ")"
+                 if exclusions else
+                 "✅ Negative-Screening: Keine Ausschlusskriterien verletzt")
 
     if is_advisor():
         st.markdown(f"**Kundenrisikoklasse: {cust_class}** vs. "
@@ -541,7 +752,7 @@ def _wizard_step3() -> None:
             "✅ KYC-Status: Verifiziert (gültig bis 01.2027)",
             f"✅ Risikoklassen-Match: Kunde Klasse {cust_class} = Vorschlag Klasse {cust_class}",
             "✅ Suitability-Test: Bestanden (Score: 94/100)",
-            "✅ Negative-Screening: Keine Ausschlusskriterien verletzt",
+            screening,
             "✅ Interessenkonflikt-Prüfung: Negativ",
         ]
     else:
@@ -632,10 +843,17 @@ def page_monitor() -> None:
             st.plotly_chart(style_plotly(fig, height=360), width="stretch")
         with c2:
             st.markdown(t("##### 🚨 Aktive Alerts", "##### Was das für Sie heißt"))
+            holdings = current_holdings()
+            worst = holdings.assign(ESG=holdings["Produkt"].map(ESG_SCORES).fillna(60)).pipe(
+                lambda df: df.loc[df["ESG"].idxmin()]
+            )
+            esg_alert = worst["ESG"] < 60
             if is_advisor():
                 st.error("🔴 **KRITISCH** — DAX -5,2 % in 24h · 12 Portfolios betroffen")
                 st.warning("🟠 **WARNUNG** — Zinskurven-Inversion · LSTM-Konfidenz 82 %")
-                st.warning("🟠 **WARNUNG** — ESG-Risiko Siemens -8 · Umschichtung empfohlen")
+                if esg_alert:
+                    st.warning(f"🟠 **WARNUNG** — ESG-Risiko {worst['Produkt']} {int(worst['ESG'])} · "
+                               "Umschichtung empfohlen")
                 st.info("🔵 **INFO** — Modell-Retraining: 10.06.2026 02:00 UTC")
             else:
                 st.warning("🟠 Die Märkte sind aktuell unruhiger. Kein Grund zur Sorge – "
@@ -653,17 +871,22 @@ def page_monitor() -> None:
                         'bewertet nach Umwelt, Sozialem und Unternehmensführung.</div>',
                         unsafe_allow_html=True)
 
+        # Positionen & Scores stammen aus current_holdings()/ESG_SCORES, damit hier
+        # exakt dieselben Produkte stehen wie im KI-Vorschlag bei "Kunde beraten".
+        holdings = current_holdings().assign(
+            ESG=lambda df: df["Produkt"].map(ESG_SCORES).fillna(60).astype(int)
+        )
+        threshold = 60
+
         g1, g2, g3, g4 = st.columns(4)
         g1.metric("🌍 Umwelt (E)", "78 / 100", "+3")
         g2.metric("👥 Sozial (S)", "65 / 100", "-2")
         g3.metric("🏛️ Governance (G)", "74 / 100", "0", delta_color="off")
-        g4.metric("⭐ Gesamt-ESG", "72 / 100", "+4")
+        g4.metric("⭐ Gesamt-ESG", f"{portfolio_esg_score(holdings)} / 100", "+4")
 
         st.write("")
-        positions = ["iShares MSCI World", "Siemens AG", "DWS Zinseinkommen",
-                     "Allianz SE", "Deutsche Telekom"]
-        scores = [82, 51, 74, 79, 68]
-        threshold = 60
+        positions = holdings["Produkt"].tolist()
+        scores = holdings["ESG"].tolist()
         colors = ["#1f9d55" if s >= threshold else "#d64545" for s in scores]
         fig = go.Figure(go.Bar(x=scores, y=positions, orientation="h",
                                marker=dict(color=colors), text=scores, textposition="auto"))
@@ -674,27 +897,42 @@ def page_monitor() -> None:
         fig.update_xaxes(range=[0, 100], title="ESG-Score")
         st.plotly_chart(style_plotly(fig, height=360), width="stretch")
 
+        below = holdings[holdings["ESG"] < threshold]
         if st.toggle(t("ESG-Filter aktivieren (Mindest-Score: 60)",
                        "Nur nachhaltige Anlagen anzeigen (ab Score 60)")):
-            st.info(t("2 Positionen unterschreiten den ESG-Mindest-Score. "
-                      "Rebalancing-Vorschlag wird angezeigt.",
-                      "2 Ihrer Anlagen sind aktuell weniger nachhaltig. "
-                      "Hier ein Tausch-Vorschlag:"))
-            rebal = pd.DataFrame([
-                ["VERKAUFEN", "Siemens AG", "500 Stk.", "ESG-Score 51 < 60",
-                 "Schneider Electric (ESG: 88)"],
-                ["KAUFEN", "Schneider El.", "380 Stk.", "ESG-konformer Ersatz", "–"],
-            ], columns=["Aktion", "Position", "Menge", "Grund", "Vorgeschlagener Ersatz"])
+            if below.empty:
+                st.success(t("Alle Positionen erfüllen den ESG-Mindest-Score.",
+                             "Alle Ihre Anlagen erfüllen bereits den Nachhaltigkeits-Mindeststandard."))
+            else:
+                st.info(t(f"{len(below)} Position(en) unterschreiten den ESG-Mindest-Score. "
+                          "Rebalancing-Vorschlag wird angezeigt.",
+                          f"{len(below)} Ihrer Anlagen sind aktuell weniger nachhaltig. "
+                          "Hier ein Tausch-Vorschlag:"))
+                rebal_rows = []
+                for _, row in below.iterrows():
+                    asset = PRODUCT_TO_ASSET.get(row["Produkt"])
+                    if asset:
+                        esg_name, _isin, _ret, _rc = PRODUCT_CATALOG[asset]["esg"]
+                        rebal_rows.append(["VERKAUFEN", row["Produkt"], f"ESG-Score {row['ESG']} < {threshold}",
+                                          f"{esg_name} (ESG-Score {ESG_SCORES[esg_name]})"])
+                        rebal_rows.append(["KAUFEN", esg_name, "ESG-konformer Ersatz", "–"])
+                    else:
+                        rebal_rows.append(["PRÜFEN", row["Produkt"],
+                                          f"ESG-Score {row['ESG']} < {threshold} · Einzeltitel ohne Fonds-Substitut",
+                                          "–"])
+                rebal = pd.DataFrame(rebal_rows, columns=["Aktion", "Position", "Grund", "Vorgeschlagener Ersatz"])
 
-            def color_action(val: str) -> str:
-                if val == "VERKAUFEN":
-                    return "background-color:#d64545;color:white;font-weight:700;"
-                if val == "KAUFEN":
-                    return "background-color:#1f9d55;color:white;font-weight:700;"
-                return ""
+                def color_action(val: str) -> str:
+                    if val == "VERKAUFEN":
+                        return "background-color:#d64545;color:white;font-weight:700;"
+                    if val == "KAUFEN":
+                        return "background-color:#1f9d55;color:white;font-weight:700;"
+                    if val == "PRÜFEN":
+                        return "background-color:#e08e0b;color:white;font-weight:700;"
+                    return ""
 
-            st.dataframe(rebal.style.map(color_action, subset=["Aktion"]),
-                         width="stretch", hide_index=True)
+                st.dataframe(rebal.style.map(color_action, subset=["Aktion"]),
+                             width="stretch", hide_index=True)
 
 
 # --------------------------------------------------------------------------- #
@@ -708,23 +946,38 @@ def page_compliance() -> None:
         st.info("Dieser Bereich ist für Ihren Berater. Er stellt sicher, dass jede Empfehlung "
                 "gesetzlich zu Ihrem Profil passt, bevor sie Ihnen vorgeschlagen wird.")
 
+    # Der aktuell in "Kunde beraten" erfasste Kunde steht hier an erster Stelle
+    # (statt einer fest codierten "Dr. Maria Schmidt"), zusätzlich zwei feste
+    # Demo-Profile, damit der Check weiterhin gegen beliebige Profile testbar bleibt.
+    current = st.session_state["profile"]
+    cust_class_current = RISK_TO_CLASS[current["risk"]]
+    customer_options = {
+        f"{current['name']} – Klasse {cust_class_current} (aktueller Kunde)": cust_class_current,
+        "Klaus Weber – Klasse 2": 2,
+        "Julia Bauer – Klasse 4": 4,
+    }
+
     left, right = st.columns([2, 3])
     with left:
         product = st.selectbox("Anlageprodukt auswählen", list(COMPLIANCE_PRODUCTS.keys()))
-        profile = st.selectbox("Kundenprofil", list(COMPLIANCE_PROFILES.keys()))
+        profile_choice = st.selectbox("Kundenprofil", list(customer_options.keys()))
         if st.button("🔍 Compliance-Check durchführen", type="primary"):
             st.session_state["compliance_done"] = True
             st.session_state["compliance_product"] = product
-            st.session_state["compliance_profile"] = profile
+            st.session_state["compliance_profile"] = profile_choice
 
     with right:
         if not st.session_state.get("compliance_done"):
             st.info("Produkt und Kundenprofil auswählen, dann **Compliance-Check durchführen**.")
         else:
             product = st.session_state["compliance_product"]
-            profile = st.session_state["compliance_profile"]
+            profile_choice = st.session_state["compliance_profile"]
             prod_class = COMPLIANCE_PRODUCTS[product]
-            cust_class = COMPLIANCE_PROFILES[profile]
+            cust_class = customer_options.get(profile_choice)
+            if cust_class is None:
+                st.warning("Dieses Kundenprofil ist nicht mehr verfügbar (Name/Risiko wurde geändert). "
+                           "Bitte Compliance-Check erneut durchführen.")
+                return
             match = prod_class <= cust_class
 
             symbol = "✅ Match" if match else "❌ Mismatch"
