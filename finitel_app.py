@@ -64,7 +64,7 @@ NAV_OPTIONS = [
 st.markdown(
     f"""
     <style>
-    .block-container {{ padding-top: 1.5rem; padding-bottom: 2.5rem; max-width: 1280px; }}
+    .block-container {{ padding-top: 4rem; padding-bottom: 2.5rem; max-width: 1280px; }}
     html, body, [class*="css"] {{ font-size: 16px; }}
 
     /* Lesbarkeit erzwingen (Fallback, falls .streamlit/config.toml nicht greift):
@@ -86,7 +86,7 @@ st.markdown(
         margin-bottom: 1.4rem;
         box-shadow: 0 6px 24px rgba(30,39,97,0.18);
     }}
-    .fi-hero h1 {{ font-size: 1.9rem; font-weight: 800; margin: 0 0 4px 0; color:#fff; }}
+    .fi-hero h1 {{ font-size: 1.9rem; font-weight: 800; line-height: 1.25; margin: 0 0 4px 0; color:#fff; }}
     .fi-hero p  {{ font-size: 1.02rem; margin: 0; opacity: 0.92; }}
     .fi-hero .fi-eyebrow {{
         text-transform: uppercase; letter-spacing: 0.12em; font-size: 0.72rem;
@@ -94,7 +94,7 @@ st.markdown(
     }}
 
     /* ---------- Seiten-Header ---------- */
-    .fi-title    {{ color:{NAVY}; font-size:1.7rem; font-weight:800; margin-bottom:2px; }}
+    .fi-title    {{ color:{NAVY}; font-size:1.7rem; font-weight:800; line-height:1.35; padding-top:0.1rem; margin-bottom:2px; }}
     .fi-subtitle {{ color:#5a6072; font-size:1.0rem; margin:0 0 1.2rem 0; }}
     .fi-section  {{ color:{NAVY}; font-size:1.15rem; font-weight:700; margin:0.4rem 0 0.6rem 0; }}
 
@@ -236,13 +236,17 @@ def hero(eyebrow: str, title: str, text: str) -> None:
 
 
 def style_plotly(fig: go.Figure, height: int = 360) -> go.Figure:
+    # Ohne gesetzten Layout-Titel rendert Plotly sonst "undefined" (z.B. beim Gauge).
+    if fig.layout.title.text is None:
+        fig.update_layout(title_text="")
     fig.update_layout(
         template="plotly_white",
         height=height,
-        margin=dict(l=20, r=20, t=50, b=20),
+        margin=dict(l=20, r=20, t=60, b=70),
         font=dict(color=NAVY),
         title_font=dict(color=NAVY, size=16),
-        legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="left", x=0),
+        # Legende unten, damit sie den oben-links platzierten Titel nicht überlappt.
+        legend=dict(orientation="h", yanchor="top", y=-0.18, xanchor="left", x=0),
     )
     return fig
 
@@ -310,8 +314,10 @@ COMPLIANCE_PROFILES = {
 def portfolio_performance_fig() -> go.Figure:
     months = ["Jan", "Feb", "Mär", "Apr", "Mai", "Jun",
               "Jul", "Aug", "Sep", "Okt", "Nov", "Dez"]
-    port_ret = np.random.normal(0.9, 1.6, 12)
-    bench_ret = np.random.normal(0.6, 1.3, 12)
+    # Beide Renditen strikt positiv; Benchmark als kleinerer Bruchteil der Portfolio-
+    # Rendite -> beide steigen über 100, Benchmark bleibt durchgehend unter dem Portfolio.
+    port_ret = np.abs(np.random.normal(1.3, 0.6, 12))
+    bench_ret = port_ret * np.random.uniform(0.35, 0.55, 12)
     portfolio = 100 * np.cumprod(1 + port_ret / 100)
     benchmark = 100 * np.cumprod(1 + bench_ret / 100)
     portfolio[0], benchmark[0] = 100, 100
