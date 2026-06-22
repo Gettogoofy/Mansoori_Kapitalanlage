@@ -1052,8 +1052,8 @@ def main() -> None:
         st.markdown(
             f'<div class="fi-side-info"><b>ML-Modell Status:</b> 🟢 Online<br>'
             f'<b>Letztes Update:</b> heute, {now}<br>'
-            f'<b>Projektphase:</b> MS2 → MS3</div>', unsafe_allow_html=True)
-        st.markdown('<div class="fi-footer">FinIntel GmbH · Prototyp v0.1 · MS2→MS3</div>',
+            f'<b>Projektphase:</b> Go Live</div>', unsafe_allow_html=True)
+        st.markdown('<div class="fi-footer">FinIntel GmbH · Prototyp v0.1 · Go Live</div>',
                     unsafe_allow_html=True)
 
     pages = {
